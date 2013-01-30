@@ -193,13 +193,6 @@ NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id value) {
 #endif
 
 - (NSString *)stringFromHTTPMethod:(AFHTTPMethod)httpMethod;
-- (NSMutableURLRequest *)multipartFormRequestWithMethod:(NSString *)method
-                                                   path:(NSString *)path
-                                             parameters:(NSDictionary *)parameters
-                              constructingBodyWithBlock:(void (^)(id <AFMultipartFormData> formData))block;
-- (NSMutableURLRequest *)requestWithMethod:(NSString *)method
-                                      path:(NSString *)path
-                                parameters:(NSDictionary *)parameters;
 @end
 
 @implementation AFHTTPClient
@@ -431,22 +424,26 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
 {
     NSString *methodString;
     switch (httpMethod) {
-        case AFGetHTTPMethod:
+        case AFMethodGET:
             methodString = @"GET";
             break;
-        case AFPostHTTPMethod:
+        case AFMethodPOST:
             methodString = @"POST";
             break;
-        case AFDeleteHTTPMethod:
+        case AFMethodDELETE:
             methodString = @"DELETE";
             break;
-        case AFPutHTTPMethod:
+        case AFMethodPUT:
             methodString = @"PUT";
             break;
-        case AFHeadHTTPMethod:
+        case AFMethodHEAD:
             methodString = @"HEAD";
             break;
+        case AFMethodPATCH:
+            methodString = @"PATCH";
+            break;
         default:
+            methodString = nil;
             break;
     }
     return methodString;
@@ -457,16 +454,6 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
                                           path:(NSString *)path
                                     parameters:(NSDictionary *)parameters
 {
-    return [self requestWithMethod:[self stringFromHTTPMethod:method]
-                              path:path
-                        parameters:parameters];
-}
-
-- (NSMutableURLRequest *)requestWithMethod:(NSString *)method
-                                      path:(NSString *)path
-                                parameters:(NSDictionary *)parameters
-{
-    NSParameterAssert(method);
     
     if (!path) {
         path = @"";
@@ -474,11 +461,11 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
     
     NSURL *url = [NSURL URLWithString:path relativeToURL:self.baseURL];
 	NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:url];
-    [request setHTTPMethod:method];
+    [request setHTTPMethod:[self stringFromHTTPMethod:method]];
     [request setAllHTTPHeaderFields:self.defaultHeaders];
     
     if (parameters) {
-        if ([method isEqualToString:@"GET"] || [method isEqualToString:@"HEAD"] || [method isEqualToString:@"DELETE"]) {
+        if (method == AFMethodGET || method == AFMethodHEAD || method == AFMethodDELETE) {
             url = [NSURL URLWithString:[[url absoluteString] stringByAppendingFormat:[path rangeOfString:@"?"].location == NSNotFound ? @"?%@" : @"&%@", AFQueryStringFromParametersWithEncoding(parameters, self.stringEncoding)]];
             [request setURL:url];
         } else {
@@ -514,21 +501,9 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
                                                  parameters:(NSDictionary *)parameters
                                   constructingBodyWithBlock:(void (^)(id <AFMultipartFormData> formData))block
 {
-    return [self multipartFormRequestWithMethod:[self stringFromHTTPMethod:method]
-                                           path:path
-                                     parameters:parameters
-                      constructingBodyWithBlock:block];
-}
-
-- (NSMutableURLRequest *)multipartFormRequestWithMethod:(NSString *)method
-                                                   path:(NSString *)path
-                                             parameters:(NSDictionary *)parameters
-                              constructingBodyWithBlock:(void (^)(id <AFMultipartFormData> formData))block
-{
-    NSParameterAssert(method);
-    NSParameterAssert(![method isEqualToString:@"GET"] && ![method isEqualToString:@"HEAD"]);
+    NSParameterAssert(method != AFMethodGET && method != AFMethodHEAD);
     
-    NSMutableURLRequest *request = [self requestWithMethod:method path:path parameters:nil];
+    NSMutableURLRequest *request = [self requestWithHTTPMethod:method path:path parameters:nil];
     
     __block AFStreamingMultipartFormData *formData = [[AFStreamingMultipartFormData alloc] initWithURLRequest:request stringEncoding:self.stringEncoding];
     
@@ -587,17 +562,18 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
     [self.operationQueue addOperation:operation];
 }
 
-- (void)cancelAllHTTPOperationsWithMethod:(NSString *)method
+- (void)cancelAllHTTPOperationsWithMethod:(AFHTTPMethod)method
                                      path:(NSString *)path
 {
-    NSString *URLStringToMatched = [[[self requestWithMethod:(method ?: @"GET") path:path parameters:nil] URL] absoluteString];
+    NSString *URLStringToMatched = [[[self requestWithHTTPMethod:method path:path parameters:nil] URL] absoluteString];
     
     for (NSOperation *operation in [self.operationQueue operations]) {
         if (![operation isKindOfClass:[AFHTTPRequestOperation class]]) {
             continue;
         }
         
-        BOOL hasMatchingMethod = !method || [method isEqualToString:[[(AFHTTPRequestOperation *)operation request] HTTPMethod]];
+        NSString *methodString = [self stringFromHTTPMethod:method];
+        BOOL hasMatchingMethod = !methodString || [methodString isEqualToString:[[(AFHTTPRequestOperation *)operation request] HTTPMethod]];
         BOOL hasMatchingURL = [[[[(AFHTTPRequestOperation *)operation request] URL] absoluteString] isEqualToString:URLStringToMatched];
         
         if (hasMatchingMethod && hasMatchingURL) {
@@ -674,7 +650,7 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
         success:(void (^)(AFHTTPRequestOperation *operation, id responseObject))success
         failure:(void (^)(AFHTTPRequestOperation *operation, NSError *error))failure
 {
-	NSURLRequest *request = [self requestWithMethod:@"GET" path:path parameters:parameters];
+	NSURLRequest *request = [self requestWithHTTPMethod:AFMethodGET path:path parameters:parameters];
     AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:success failure:failure];
     [self enqueueHTTPRequestOperation:operation];
 }
@@ -684,7 +660,7 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
          success:(void (^)(AFHTTPRequestOperation *operation, id responseObject))success
          failure:(void (^)(AFHTTPRequestOperation *operation, NSError *error))failure
 {
-	NSURLRequest *request = [self requestWithMethod:@"POST" path:path parameters:parameters];
+	NSURLRequest *request = [self requestWithHTTPMethod:AFMethodPOST path:path parameters:parameters];
 	AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:success failure:failure];
     [self enqueueHTTPRequestOperation:operation];
 }
@@ -694,7 +670,7 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
         success:(void (^)(AFHTTPRequestOperation *operation, id responseObject))success
         failure:(void (^)(AFHTTPRequestOperation *operation, NSError *error))failure
 {
-	NSURLRequest *request = [self requestWithMethod:@"PUT" path:path parameters:parameters];
+	NSURLRequest *request = [self requestWithHTTPMethod:AFMethodPUT path:path parameters:parameters];
 	AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:success failure:failure];
     [self enqueueHTTPRequestOperation:operation];
 }
@@ -704,7 +680,7 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
            success:(void (^)(AFHTTPRequestOperation *operation, id responseObject))success
            failure:(void (^)(AFHTTPRequestOperation *operation, NSError *error))failure
 {
-	NSURLRequest *request = [self requestWithMethod:@"DELETE" path:path parameters:parameters];
+	NSURLRequest *request = [self requestWithHTTPMethod:AFMethodDELETE path:path parameters:parameters];
 	AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:success failure:failure];
     [self enqueueHTTPRequestOperation:operation];
 }
@@ -714,7 +690,7 @@ static void AFNetworkReachabilityReleaseCallback(const void *info) {
           success:(void (^)(AFHTTPRequestOperation *operation, id responseObject))success
           failure:(void (^)(AFHTTPRequestOperation *operation, NSError *error))failure
 {
-    NSURLRequest *request = [self requestWithMethod:@"PATCH" path:path parameters:parameters];
+    NSURLRequest *request = [self requestWithHTTPMethod:AFMethodPATCH path:path parameters:parameters];
 	AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:success failure:failure];
     [self enqueueHTTPRequestOperation:operation];
 }
